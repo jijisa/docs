@@ -251,7 +251,11 @@ TCP/UDP 포트는 16bit unsigned로 되어 0 ~ 65535 범위에서 할당할 수 
 
 kube-proxy iptables가 SNAT을 하면, 60k 정도의 dns 세션 처리가 가능하다. 만약 그 이상의 query가 들어오면, SNAT 소스 포트 할당을 할 수 없게 된다.
 
-결국 이 SNAT이 kubernetes 성능 저하의 원인이 된다.
+결국 이 incoming request에 대한 SNAT이 kubernetes 성능 저하의 원인이 된다.
+
+manual DNAT iptables는 incoming request에 대한 SNAT을 하지 않기 때문에
+성능 저하가 없다.
+
 
 ## 질문과 대답
 
@@ -274,14 +278,15 @@ SNAT의 기본 unique 단위는 (소스 IP, 소스 포트, 목적 IP, 목적 포
 20개까지 늘려 보았으나 10,000 - 12,000 rps정도에서 수렴한다.
 그 이상 container를 늘려도 시스템 과부하로 성능이 나오지 않는다.
 
-과연 한 물리 머신에 20개의 container를 띄워 서비스하는 것이 의미가 있을까?
+그냥 물리 머신에 bind 하나 구동해도 그 정도의 성능이 나온다면, 
+과연 20개의 container를 띄워 서비스하는 것이 의미가 있을까?
 
 
 ## 결론
 
-* kubernetes의 external IP 서비스 기능으로 부하 부산을 하는 방식으로는
+kubernetes의 external IP 서비스 기능으로 부하 부산을 하는 방식으로는
 SNAT으로 인한 성능 저하때문에  고성능의 서비스를 하기에 어렵다.
-* 고성능 서비스를 위해서는 외부 Load Balancer를 사용하는 것이 좋다.
+
 
 ## 에필로그 : health check의 기준 문제
 
@@ -291,10 +296,10 @@ healthy하다고 간주한다.
 어떻게 되어 있는 가 하는 것이다.
 
 고객에게 문의하였으나 이 설정값을 모른다고 한다.
-health check program이 Perl 로 작성된 것이라니 찾는 것은 그리 어렵지 않다.
 이 RWT가 너무 짧다면 health check의 기준이 너무 높게 설정된 것이 아닌가 
 하는 것이다.
-예를 들어, RWT를 1초로 했다면, bind container가 1.1초 후에 응답했더라도 실패가 된다는 것이다.
+예를 들어, RWT를 1초로 했다면, bind container가 1.1초 후에 응답했더라도 
+실패가 된다는 것이다.
 성능 실험을 할 때 이런 기준점은 알고 하는 것이 좋다.
 
 
