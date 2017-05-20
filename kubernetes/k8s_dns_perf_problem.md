@@ -43,7 +43,7 @@ L4에서 DNS container에 가중치를 증가시키면서 requests/seconds (rps)
 ## 실험 1. kubedns가 영향을 주는가?
 
 먼저 클러스터 내부에 서비스하는 kubedns가 영향을 주는 것이 아닌가 하는 의심이
-있어 확인차 다음과 같이 실험했다.
+있어 확인을 위해 다음과 같이 실험했다.
 
 BIND container를 하나만 켜고, 외부에서 cnn.com 을 query해 보았다.
 
@@ -76,9 +76,11 @@ cnn.com. (36)
 151.101.1.67, A 151.101.129.67, A 151.101.65.67, A 151.101.193.67 (384)
 ```
 바로 cache된 데이터를 리턴하는 것을 볼 수 있다.
+kubedns는 BIND 서비스에 관여하지 않는다.
 
-BIND container 성능과 kubedns는 무관함을 보여준다.
-물론 kubedns를 켜고/끄고 위 성능 실험을 진행해 보았다.
+
+물론 kubedns를 켜고/끄고 성능 실험을 진행해 보았고
+BIND container 성능과 kubedns는 무관함을 보았다.
 
 결론: kubedns가 켜져 있든 꺼져 있든 결과에는 무관하다.
 
@@ -86,8 +88,8 @@ BIND container 성능과 kubedns는 무관함을 보여준다.
 ## 실험 2. docker0 트래픽 분석
 
 이제 부하를 준 상태에서 docker0의 트래픽을 분석하기로 한다.
-두번의 실험을 하는데, 한번은 kube-proxy가 만든 iptables(kube-proxy iptables라고 이름짓자.) 기반으로 하고,
-또 한번은 수작업으로 만든 iptables(manual DNAT iptables라고 이름짓자.) 기반으로 하여 패킷 dump를 한다.
+두번의 실험을 하는데, 한번은 kube-proxy가 만든 iptables(kube-proxy iptables라고 하자.) 기반으로 하고,
+또 한번은 수작업으로 만든 iptables(manual DNAT iptables라고 하자.) 기반으로 하여 패킷 dump를 한다.
 
     # tcpdump -n -w dump.bin -i docker0 host 10.100.13.3
 
@@ -123,9 +125,9 @@ BIND container 성능과 kubedns는 무관함을 보여준다.
 ```
 
 차이가 보이는가?
+
 kube-proxy iptables는 DNS query packet의 source ip가 항상 ares-k29이다.
 즉, container가 구동 중인 호스트의 source ip로 변경된 것을 볼 수 있다.
-
 manual DNAT iptables는 DNS query packet의 source ip가 실제 source ip로 유지된다.
 
 여기서 얻은 정보는
@@ -160,8 +162,9 @@ outgoing dns query는 BIND container가 수행하는 recursive query를 의미�
 ## SNAT의 성능 문제
 
 SNAT의 성능은 conntrack table과도 관련이 있다. netfilter는 SNAT을 위해
-conntrack table를 이용한다. conntrack table은 memory에 만들어져 SNAT의
-정보를 저장하기 위해 사용된다.
+conntrack table를 이용한다. conntrack table은 Linked-list table로서 
+memory에 만들어져 SNAT의 정보를 저장하기 위해 사용된다.
+
 그렇다면, 혹시 conntrack table이 full이 되어 문제가 발생하는 것일까?
 이것을 검증하기 위해 트래픽을 흘릴 때 conntrack table의 사용 개수를 저장해
 보았다.
@@ -209,11 +212,11 @@ conntract table의 사용개수는 /proc/sys/net/netfilter/nf_conntrack_count로
 2017. 05. 19. (금) 13:54:30 KST :  48029 / 4194304
 ```
 
-위 포맷은 <date> : <conntract_count> / <conntrack_max> 이다.
+위 포맷은 date : conntract_count / conntrack_max 이다.
 
-최대 가능 수자는 4M 개인데 60k개 정도에서 최고점을 찍고 하강한다. 실제로 그 시점 쯤에 health check가 실패한다고 한다.
+최대 가능개수 4M개(4,194,304)인데 60k개 정도에서 최고점을 찍고 하강한다. 실제로 그 시점 쯤에 health check가 실패한다고 한다.
 
-conntrack table의 최대 개수와 무관하게 SNAT의 정보 저장에 한계가 있다.
+conntrack table의 최대 가능 개수와 무관하게 SNAT의 정보 저장에 한계가 있다.
 
 생각해 보면 당연하다.
 SNAT의 bucket entry는 (소스 IP, 소스 포트, 목적 IP, 목적 포트)와 같이
@@ -221,19 +224,22 @@ unique tuple들로 정의된다.
 이 4개의 element가 하나라도 다르면 다른 entry가 된다.
 
 예) unique한 SNAT entry
-1.1.1.1:50135 -> 10.100.13.3:53
-1.1.1.1:50136 -> 10.100.13.3:53
-1.2.1.1:50137 -> 10.100.13.3:53
-...
+
+    1.1.1.1:50135 -> 10.100.13.3:53
+    1.1.1.1:50136 -> 10.100.13.3:53
+    1.2.1.1:50135 -> 10.100.13.3:53
+    ...
 
 kube-proxy iptables의 문제는 incoming traffic을 모두 SNAT하기 때문에
 소스 IP가 같다는 것이다.
 그리고 bind container는 한 개이기 때문에 목적 IP와 목적 port도 동일하다.
 그렇다면, unique하기 위해서는 소스 포트를 다르게 할 수 밖에 없다.
+
 예)
-1.1.1.1:50135 -> 10.100.13.3:53
-1.1.1.1:50136 -> 10.100.13.3:53
-1.1.1.1:50137 -> 10.100.13.3:53
+
+    1.1.1.1:50135 -> 10.100.13.3:53
+    1.1.1.1:50136 -> 10.100.13.3:53
+    1.1.1.1:50137 -> 10.100.13.3:53
 
 
 여기서 포트에 대해 잠시 고찰해 보자.
@@ -254,11 +260,13 @@ Q. 이전에 4개의 container를 띄워 분산하면 1개가 처리하는 것�
 
 A. 목적 IP가 분산되기 때문이다.
 SNAT의 기본 unique 단위는 (소스 IP, 소스 포트, 목적 IP, 목적 포트) tuple이다.
+
 예)
-1.1.1.1:50135 -> 10.100.13.3:53
-1.1.1.1:50136 -> 10.100.13.3:53
-1.1.1.1:50135 -> 10.100.13.4:53
-1.1.1.1:50136 -> 10.100.13.4:53
+
+    1.1.1.1:50135 -> 10.100.13.3:53
+    1.1.1.1:50136 -> 10.100.13.3:53
+    1.1.1.1:50135 -> 10.100.13.4:53
+    1.1.1.1:50136 -> 10.100.13.4:53
 
 그러므로 container 개수를 늘리면 어느 정도 성능 향상이 된다.
 
@@ -277,9 +285,18 @@ SNAT으로 인한 성능 저하때문에  고성능의 서비스를 하기에 �
 
 ## 에필로그 : health check의 기준 문제
 
-위에서 말한대로 health check는 100개의 query를 던져 100개 다 응답을 받으면 healthy하다고 간주한다. 의문점은 100개를 다 받는데 기다리는 시간(response wait time, RWT) 설정이 어떻게 되어 있는 가 하는 것이다.
-고객에게 문의하였으나 이 설정값을 모른다고 한다. 이 RWT가 너무 짧다면 health check의 기준이 너무 높게 설정된 것이 아닌가 하는 것이다.
+위에서 말한대로 health check는 100개의 query를 던져 100개 다 응답을 받으면 
+healthy하다고 간주한다. 
+의문점은 100개를 다 받는데 기다리는 시간(response wait time, RWT) 설정이 
+어떻게 되어 있는 가 하는 것이다.
+
+고객에게 문의하였으나 이 설정값을 모른다고 한다.
+health check program이 Perl 로 작성된 것이라니 찾는 것은 그리 어렵지 않다.
+이 RWT가 너무 짧다면 health check의 기준이 너무 높게 설정된 것이 아닌가 
+하는 것이다.
 예를 들어, RWT를 1초로 했다면, bind container가 1.1초 후에 응답했더라도 실패가 된다는 것이다.
+성능 실험을 할 때 이런 기준점은 알고 하는 것이 좋다.
+
 
 ## Appendix
 
