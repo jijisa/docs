@@ -26,7 +26,7 @@ L4에 DNS container의 external ip를 등록하고 실제 트래픽을 흐르게
 응답하는 지 본다.
 100개 다 응답하면 healthy한 것이고, 하나라도 응답이 안되면 상용 서비스 적용
 실패로 간주한다.
-L4에서 DNS container에 가중치를 증가시키면서 requests/seconds (rps)의 한계를
+L4에서 DNS container에 가중치를 증가시키면서 requests/second (rps)의 한계를
 시험한다.
 
 성능 실험 결과는 다음과 같이 나왔다.
